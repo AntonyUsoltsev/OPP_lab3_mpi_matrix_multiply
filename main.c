@@ -1,44 +1,32 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <mpi.h>
-#include "mpi.h"
+#include <unistd.h>
 
-#define N1 8
-#define N2 8
-#define N3 8
+#define N1 4
+#define N2 4
+#define N3 4
 
 #define RANK_ROOT 0
-#define CONTINUE 1
-#define EXIT 0
 
-typedef struct {
-    double *data;
-    int height;
-    int width;
-} Matrix;
-
-
-
-
-//void old_fill_matrix(double *A, int height, int width) {
-//    for (int i = 0; i < height; i++) {
-//        for (int j = 0; j < width; j++) {
-//            if (i == j)
-//                A[i * width + j] = 2.0f;
-//            else
-//                A[i * width + j] = 1.0f;
-//        }
-//    }
-//}
-void old_fill_matrix(double *A, int height, int width) {
-    for (int i = 0; i < height * width; i++) {
-        A[i] = i + 1;
+void fill_matrix(double *A, int height, int width) {
+    for (int i = 0; i < height; i++) {
+        for (int j = 0; j < width; j++) {
+            if (i == j)
+                A[i * width + j] = 2.0f;
+            else
+                A[i * width + j] = 1.0f;
+        }
     }
 }
+//void old_fill_matrix(double *A, int height, int width) {
+//    for (int i = 0; i < height * width; i++) {
+//        A[i] = i + 1;
+//    }
+//}
 
 
-void old_print_matrix(double *A, int height, int width) {
+void print_matrix(double *A, int height, int width) {
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             printf("%lf ", A[i * width + j]);
@@ -47,7 +35,8 @@ void old_print_matrix(double *A, int height, int width) {
     }
 }
 
-void matrix_multiply(const double *A, int A_height, int A_width, const double *B, int B_height, int B_width, double *C) {
+void
+matrix_multiply(const double *A, int A_height, int A_width, const double *B, int B_height, int B_width, double *C) {
     if (A_width != B_height)
         return;
 
@@ -81,27 +70,8 @@ MPI_Comm create_new_comm(int size, int rank, int *dims) {
     return comm2d;
 }
 
+void create_new_X_Y_comms(MPI_Comm row_comm, MPI_Comm col_comm, MPI_Comm comm2d, int *coords, const int *dims) {
 
-int main(int argc, char **argv) {
-    MPI_Init(&argc, &argv);
-    int world_size, world_rank;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    double *A,*B,*C;
-    if (world_rank == RANK_ROOT) {
-        A = calloc(N1 * N2, sizeof(double));
-        old_fill_matrix(A, N1, N2);
-        B = calloc(N2 * N3, sizeof(double));
-        old_fill_matrix(B, N2, N3);
-        C = calloc(N1 * N3, sizeof(double));
-    }
-    int dims[2] = {0, 0}; //x y
-
-    MPI_Comm comm2d = create_new_comm(world_size, world_rank, dims);
-    int periods[2] = {0, 0}, coords[2];
-    MPI_Cart_get(comm2d, 2, dims, periods, coords);
-
-    MPI_Comm row_comm, col_comm; //x y
     MPI_Comm_split(comm2d, coords[0], coords[1], &col_comm);
     MPI_Comm_split(comm2d, coords[1], coords[0], &row_comm);
     MPI_Barrier(comm2d);
@@ -120,14 +90,11 @@ int main(int argc, char **argv) {
         perror("Bad size of matrix");
         exit(1);
     }
+}
 
-    int A_split_size = N1 / col_size;
-    int B_split_size = N3 / row_size;;
-    double *A_recv = calloc(A_split_size * N2, sizeof(double));
-    double *B_recv = calloc(B_split_size * N2, sizeof(double));
-
-    MPI_Barrier(MPI_COMM_WORLD);
-
+void
+send_matrix(double *A_recv, double *B_recv, int A_split_size, int B_split_size, double *A, double *B, const int *coords,
+            MPI_Comm row_comm, MPI_Comm col_comm) {
     MPI_Datatype column;
     MPI_Type_vector(N2, B_split_size, N3, MPI_DOUBLE, &column);
     MPI_Type_commit(&column);
@@ -137,18 +104,63 @@ int main(int argc, char **argv) {
 
     if (coords[0] == 0) {
         MPI_Scatter(A, N2 * A_split_size, MPI_DOUBLE, A_recv, N2 * A_split_size, MPI_DOUBLE, 0, col_comm);
-
     }
     if (coords[1] == 0) {
         MPI_Scatter(B, 1, column_resized, B_recv, N2 * B_split_size, MPI_DOUBLE, 0, row_comm);
+        print_matrix(B_recv, N2, B_split_size);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
-    MPI_Bcast(A_recv, N2 * A_split_size, MPI_DOUBLE, 0, row_comm);
-    MPI_Bcast(B_recv, N2 * B_split_size, MPI_DOUBLE, 0, col_comm);
+    MPI_Bcast(A_recv, N2 * A_split_size, MPI_DOUBLE, RANK_ROOT, row_comm);
+    MPI_Bcast(B_recv, N2 * B_split_size, MPI_DOUBLE, RANK_ROOT, col_comm);
+
+    MPI_Type_free(&column);
+    MPI_Type_free(&column_resized);
+}
+
+int main(int argc, char **argv) {
+    MPI_Init(&argc, &argv);
+    int world_size, world_rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    double *A, *B, *C;
+    if (world_rank == RANK_ROOT) {
+        A = calloc(N1 * N2, sizeof(double));
+        fill_matrix(A, N1, N2);
+        print_matrix(A, N1, N2);
+        puts("\n");
+        B = calloc(N2 * N3, sizeof(double));
+        fill_matrix(B, N2, N3);
+        print_matrix(B, N2, N3);
+        C = calloc(N1 * N3, sizeof(double));
+    }
+    int dims[2] = {0, 0}; //x y
+
+    MPI_Comm comm2d = create_new_comm(world_size, world_rank, dims);
+    int periods[2] = {0, 0}, coords[2];
+    MPI_Cart_get(comm2d, 2, dims, periods, coords);
+    MPI_Comm row_comm = NULL, col_comm = NULL; //x y
+    create_new_X_Y_comms(row_comm, col_comm, comm2d, coords, dims);
+
+    int A_split_size = N1 / dims[0];
+    int B_split_size = N3 / dims[1];
+    printf("Split: A:%d, B:%d\n", A_split_size, B_split_size);
+    double *A_recv = calloc(A_split_size * N2, sizeof(double));
+    double *B_recv = calloc(B_split_size * N2, sizeof(double));
 
     MPI_Barrier(MPI_COMM_WORLD);
 
+    send_matrix(A_recv, B_recv, A_split_size, B_split_size, A, B, coords, row_comm, col_comm);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    sleep(1 + world_rank * 2);
+    printf("RANK (%d,%d): ", coords[0], coords[1]);
+    puts("\n");
+    // print_matrix(A_recv, A_split_size, N2);
+    puts("\n");
+    //print_matrix(B_recv, N2, B_split_size);
+    puts("\n\n");
     double *C_part = calloc(A_split_size * B_split_size, sizeof(double));
     matrix_multiply(A_recv, A_split_size, N2, B_recv, N2, B_split_size, C_part);
 
@@ -162,6 +174,7 @@ int main(int argc, char **argv) {
 //        matrix_displace[i] = (long) (i * N3 * sizeof(double));
 //        types[i] = MPI_DOUBLE;
 //    }
+//
 //    MPI_Datatype structure;
 //    MPI_Type_create_struct(A_split_size, block_lengths, matrix_displace, types, &structure);
 //    MPI_Type_commit(&structure);
@@ -172,10 +185,7 @@ int main(int argc, char **argv) {
     MPI_Type_create_resized(send_matrix_part, 0, (int) (B_split_size * sizeof(double)), &send_matrix_part_resized);
     MPI_Type_commit(&send_matrix_part_resized);
 
-    // A_split_size = N1/dims[1];
-    // B_split_size = N3/dims[0];
-    int *displs;
-    int *sizes;
+    int *displs, *sizes;
     if (world_rank == RANK_ROOT) {
         displs = calloc(world_size, sizeof(int));
         sizes = calloc(world_size, sizeof(int));
@@ -187,20 +197,30 @@ int main(int argc, char **argv) {
         for (int i = 0; i < world_size; i++) {
             sizes[i] = 1;
         }
-        for (int i = 0; i < world_size; i++) {
-            printf("\nDispls %d, Sizes %d\n", displs[i], sizes[i]);
-        }
+//        for (int i = 0; i < world_size; i++) {
+//            printf("\nDispls %d, Sizes %d\n", displs[i], sizes[i]);
+//        }
     }
     MPI_Gatherv(C_part, B_split_size * A_split_size, MPI_DOUBLE, C, sizes, displs, send_matrix_part_resized, RANK_ROOT,
                 comm2d);
 
     if (world_rank == RANK_ROOT) {
-        old_print_matrix(C, N1, N3);
+        // print_matrix(C, N1, N3);
+        double trace = 0;
+        for (int i = 0; i < N1; i++) {
+            for (int j = 0; j < N3; j++) {
+                if (i == j)
+                    trace += C[i * N1 + j];
+            }
+        }
+        printf("%lf\n", trace);
+//        if (trace == (3 + N1) * N1) {
+//            printf("OK\n");
+//        }
     }
     MPI_Type_free(&send_matrix_part);
     MPI_Type_free(&send_matrix_part_resized);
-    MPI_Type_free(&column);
-    MPI_Type_free(&column_resized);
+
     MPI_Finalize();
     return 0;
 }
