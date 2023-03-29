@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <mpi.h>
 #include "mpi.h"
 
 #define N1 4
@@ -39,6 +40,11 @@ void old_fill_matrix(double *A, int height, int width) {
         }
     }
 }
+//void old_fill_matrix(double *A, int height, int width) {
+//    for (int i = 0; i < height * width; i++) {
+//        A[i] = i + 1;
+//    }
+//}
 
 void print_matrix(Matrix *A) {
     for (int i = 0; i < A->height; i++) {
@@ -57,23 +63,21 @@ void old_print_matrix(double *A, int height, int width) {
         puts("\n");
     }
 }
-//
-//double *create_matrix() {
-//    unsigned long long matr_size = (unsigned long long) N1 * N2;
-//    double *A = calloc(matr_size, sizeof(double));
-//    fill_matrix(A);
-//    return A;
-//}
 
-
-
-void matrix_multiply(double *A, int A_height, int A_width, double*B, int B_height, int B_width){
-    if(A_width!= B_height)
+void
+matrix_multiply(const double *A, int A_height, int A_width, const double *B, int B_height, int B_width, double *C) {
+    if (A_width != B_height)
         return;
 
-
-
-
+    for (int i = 0; i < A_height; i++) {
+        for (int j = 0; j < B_width; j++) {
+            double sum = 0;
+            for (int k = 0; k < A_width; k++) {
+                sum += A[i * A_width + k] * B[k * B_width + j];
+            }
+            C[i * B_width + j] = sum;
+        }
+    }
 }
 
 
@@ -96,54 +100,22 @@ MPI_Comm create_new_comm(int size, int rank, int *dims) {
     return comm2d;
 }
 
-//void create_new_groups(MPI_Comm comm2d, MPI_Comm *groups, int *dims) {
-//    int periods[2] = {0, 0}, coords[2], reorder = 1;
-//    MPI_Cart_get(comm2d, 2, dims, periods, coords);
-//
-//    MPI_Comm_split(comm2d, coords[0], 1, &groups[coords[0]]);
-//    MPI_Comm_split(comm2d, coords[1] + dims[0], 1, &groups[coords[1] + dims[0]]);
-//}
 
 int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
     int world_size, world_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    double *arr;
-    double *arr_recv_row;
-    double *arr_recv_col;
-    Matrix *A;
-    Matrix *B;
-    Matrix *A_recv;
-    Matrix *B_recv;
     double *A1;
     double *B1;
+    double *C;
     if (world_rank == RANK_ROOT) {
         A1 = calloc(N1 * N2, sizeof(double));
         old_fill_matrix(A1, N1, N2);
-        A = (Matrix *) calloc(1, sizeof(Matrix));
-        A->height = N1;
-        A->width = N2;
-        A->data = calloc(N1 * N2, sizeof(double));
-        fill_matrix(A);
         B1 = calloc(N1 * N2, sizeof(double));
         old_fill_matrix(B1, N1, N2);
+        C = calloc(N1 * N3, sizeof(double));
 
-
-
-//        B = calloc(1, sizeof(Matrix));
-//        B->height = N2;
-//        B->width = N3;
-//        B->data = calloc(N2 * N3, sizeof(double));
-//        fill_matrix(B);
-//        print_matrix(A);
-//        arr = calloc(world_size, sizeof(double));
-//        for (int i = 0; i < world_size; i++) {
-//            arr[i] = i;
-//        }
-//        for (int i = 0; i < world_size; i++) {
-//            printf("%lf ", arr[i]);
-//        }
         puts("\n");
     }
     int dims[2] = {0, 0}; //x y
@@ -173,23 +145,10 @@ int main(int argc, char **argv) {
     }
 
     int A_split_size = N1 / col_size;
-    int B_split_size = N3 / row_size;
-    //  printf("Slices: A:%d B:%d\n", A_split_size, B_split_size);
-    A_recv = (Matrix *) calloc(1, sizeof(Matrix));
-    A_recv->height = A_split_size;
-    A_recv->width = N2;
+    int B_split_size = N3 / row_size;;
     double *A_recv1 = calloc(A_split_size * N2, sizeof(double));
     double *B_recv1 = calloc(B_split_size * N2, sizeof(double));
-    A_recv->data = calloc(A_split_size * N2, sizeof(double));
-    // print_matrix(A_recv);
-//    B_recv = malloc(sizeof (Matrix));
-//    A_recv->height = A_split_size;
-//    A_recv->width = N2;
-//    B_recv->data = calloc(col_size * B_split_size, sizeof(double));
-    arr_recv_row = calloc(row_size, sizeof(double));
-    arr_recv_col = calloc(col_size, sizeof(double));
-    //  printf("ALO:%d ", N2 * A_split_size);
-    // printf("SIZES: %d %d ", row_size, col_size);
+
     MPI_Barrier(MPI_COMM_WORLD);
 
     MPI_Datatype column;
@@ -216,75 +175,95 @@ int main(int argc, char **argv) {
     MPI_Bcast(B_recv1, N2 * B_split_size, MPI_DOUBLE, 0, col_comm);
 
     MPI_Barrier(MPI_COMM_WORLD);
-    sleep(1 + world_rank);
+    // sleep(1 + world_rank);
 //    for (int i = 0; i < col_size; i++) {
 //        printf("%lf ", arr_recv_col[i]);
 //    }
-    puts("\n");
-    sleep(1 + world_rank);
-    printf("RANK (%d,%d): ", coords[0], coords[1]);
-    old_print_matrix(A_recv1, A_split_size, N2);
-    puts("\n\n");
-    old_print_matrix(B_recv1, N2, B_split_size);
+    //puts("\n");
+    // sleep(1 + world_rank);
+    // printf("RANK (%d,%d): ", coords[0], coords[1]);
+    // old_print_matrix(A_recv1, A_split_size, N2);
+    //puts("\n\n");
+    //old_print_matrix(B_recv1, N2, B_split_size);
+    // puts("\n\n");
+    double *C_part = calloc(A_split_size * B_split_size, sizeof(double));
+    matrix_multiply(A_recv1, A_split_size, N2, B_recv1, N2, B_split_size, C_part);
+    //sleep(1 + world_rank);
+    printf("World_rank %d ,RANK (%d,%d) , Displs: %d\n", world_rank,coords[0], coords[1],coords[0] * B_split_size + A_split_size * coords[1] * N3 );
+    old_print_matrix(C_part, A_split_size, B_split_size);
+    //puts("\n\n");
 
-    matrix_multiply(A_recv1, A_split_size, N2, B_recv1, N2, B_split_size);
-    puts("\n\n");
 
-    //   create_new_groups(comm2d, groups, dims);
+    int *block_lengths = calloc(A_split_size, sizeof(int));
+    long *matrix_displace = calloc(A_split_size, sizeof(int));
+    MPI_Datatype *types = calloc(A_split_size, sizeof(MPI_Datatype));
+    for (int i = 0; i < A_split_size; i++) {
+        block_lengths[i] = B_split_size;
+        matrix_displace[i] = i * N3;
+        types[i] = MPI_DOUBLE;
+    }
 
-//    int new_rank, new_size;
-//    MPI_Comm_rank(row_comm, &new_rank);
-//    MPI_Comm_size(row_comm, &new_size);
+    MPI_Datatype structure;
+    MPI_Type_create_struct(A_split_size, block_lengths, matrix_displace, types, &structure);
+    MPI_Type_commit(&structure);
+
+    MPI_Datatype matrix_back, matrix_back_resized;
+    MPI_Type_vector(A_split_size, B_split_size, N3, MPI_DOUBLE, &matrix_back);
+    MPI_Type_commit(&matrix_back);
+    MPI_Type_create_resized(matrix_back, 0, (int)(B_split_size * sizeof(double)), &matrix_back_resized);
+    MPI_Type_commit(&matrix_back_resized);
+
+
+//    if (world_rank == RANK_ROOT){
+//        int num_blocks, tag, size,num_elem;
+//        MPI_Type_get_envelope(structure, &num_elem, &num_blocks, &size,&tag);
 //
-//    if (rank == 0) {
-//        printf("Number of processes in MPI_COMM_WORLD: %d\n", size);
-//        printf("Number of processes in new_comm: %d\n", new_size);
-//    }
+//        int array_of_block_lengths[num_blocks], array_of_displacements[num_blocks];
+//        MPI_Datatype array_of_types[num_blocks];
+//     //   MPI_Type_get_contents(structure, num_blocks, num_blocks, num_blocks, array_of_block_lengths,
+//                           //   array_of_displacements, array_of_types);
 //
-//    for (int i = 0; i < new_size; i++) {
-//        MPI_Barrier(row_comm); // синхронизация процессов в новом коммуникаторе
-//        if (new_rank == i) {
-//            printf("Process %d in row_comm: Hello from (%d, %d) in Cart_comm !\n", i, coords[0], coords[1]);
+//        printf("Custom datatype:\n");
+//        printf("Tag: %d\n", tag);
+//        printf("Size: %d\n", size);
+//        for (int i = 0; i < num_blocks; i++) {
+//            printf("Block %d: Type = %d, Length = %d, Displacement = %d\n", i,
+//                   array_of_types[i], array_of_block_lengths[i], array_of_displacements[i]);
 //        }
 //    }
-//    MPI_Barrier(MPI_COMM_WORLD);
-//
-//    MPI_Comm_rank(col_comm, &new_rank);
-//    MPI_Comm_size(col_comm, &new_size);
-//
-//    if (rank == 0) {
-//        printf("Number of processes in MPI_COMM_WORLD: %d\n", size);
-//        printf("Number of processes in new_comm: %d\n", new_size);
-//    }
-//
-//    for (int i = 0; i < new_size; i++) {
-//        MPI_Barrier(col_comm); // синхронизация процессов в новом коммуникаторе
-//        if (new_rank == i) {
-//            printf("Process %d in row_comm: Hello from (%d, %d) in Cart_comm !\n", i, coords[0], coords[1]);
-//        }
-//    }
 
-//
-//     MPI_Comm_rank(row_comm, &rank);
-//     printf("Comm row rank: %d\n", rank);
-//     MPI_Comm_rank(col_comm, &rank);
-//     printf("Comm col rank: %d\n", rank);
-//    // MPI_Comm_rank(groups[coords[1] + dims[0]], &rank);
-//   // printf("Comm rawf: %d\n", rank);
-//    puts("\n");
+    int *displs;
+    int *sizes;
+    if (world_rank == RANK_ROOT) {
+        displs = calloc(world_size, sizeof(int));
+        sizes = calloc(world_size, sizeof(int));
+        for (int i = 0; i < dims[1]; i++) {
+            for (int j = 0; j < dims[0]; j++) {
+                displs[i + j * dims[1]] = j * B_split_size + A_split_size * i * N3;
+            }
+            //  displs[i] = (coords[1] * N3 + coords[0]) * B_split_size;
+            //  displs[i] = coords[1] * B_split_size + A_split_size * coords[0] * N3;
+        }
+        for (int i = 0; i < world_size; i++) {
+            sizes[i] = A_split_size * B_split_size;
+        }
+        for(int i = 0; i < world_size; i++){
+           // printf("Displs %d, Sizes %d\n",displs[i],sizes[i]);
+        }
+    }
+        MPI_Gatherv(C_part, 1, structure, C, sizes, displs, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
+//    MPI_Gather(C_part, A_split_size * B_split_size, MPI_DOUBLE, C, A_split_size * B_split_size, MPI_DOUBLE, RANK_ROOT,
+//               MPI_COMM_WORLD);
 
-    // run(size, rank);
+        if (world_rank == RANK_ROOT) {
+            old_print_matrix(C, N1, N3);
+        }
 
-    //   MPI_Comm_size(MPI_COMM_WORLD, &size);
-    // MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-//    if (rank == RANK_ROOT) {
-//
-    //printf("Comm size: %d\n", size);
-//    }
 
-    MPI_Finalize();
-    return 0;
-}
+        MPI_Finalize();
+        return 0;
+    }
+
 
 
 /* 2 2 2   1 | 1 | 1
