@@ -30,21 +30,21 @@ void fill_matrix(Matrix *A) {
     }
 }
 
-void old_fill_matrix(double *A, int height, int width) {
-    for (int i = 0; i < height; i++) {
-        for (int j = 0; j < width; j++) {
-            if (i == j)
-                A[i * width + j] = 2.0f;
-            else
-                A[i * width + j] = 1.0f;
-        }
-    }
-}
 //void old_fill_matrix(double *A, int height, int width) {
-//    for (int i = 0; i < height * width; i++) {
-//        A[i] = i + 1;
+//    for (int i = 0; i < height; i++) {
+//        for (int j = 0; j < width; j++) {
+//            if (i == j)
+//                A[i * width + j] = 2.0f;
+//            else
+//                A[i * width + j] = 1.0f;
+//        }
 //    }
 //}
+void old_fill_matrix(double *A, int height, int width) {
+    for (int i = 0; i < height * width; i++) {
+        A[i] = i + 1;
+    }
+}
 
 void print_matrix(Matrix *A) {
     for (int i = 0; i < A->height; i++) {
@@ -112,8 +112,8 @@ int main(int argc, char **argv) {
     if (world_rank == RANK_ROOT) {
         A1 = calloc(N1 * N2, sizeof(double));
         old_fill_matrix(A1, N1, N2);
-        B1 = calloc(N1 * N2, sizeof(double));
-        old_fill_matrix(B1, N1, N2);
+        B1 = calloc(N2 * N3, sizeof(double));
+        old_fill_matrix(B1, N2, N3);
         C = calloc(N1 * N3, sizeof(double));
 
         puts("\n");
@@ -181,17 +181,22 @@ int main(int argc, char **argv) {
 //    }
     //puts("\n");
     // sleep(1 + world_rank);
-    // printf("RANK (%d,%d): ", coords[0], coords[1]);
-    // old_print_matrix(A_recv1, A_split_size, N2);
-    //puts("\n\n");
-    //old_print_matrix(B_recv1, N2, B_split_size);
-    // puts("\n\n");
+//     printf("RANK (%d,%d): ", coords[0], coords[1]);
+//     old_print_matrix(A_recv1, A_split_size, N2);
+//    puts("\n\n");
+//    old_print_matrix(B_recv1, N2, B_split_size);
+//     puts("\n\n");
     double *C_part = calloc(A_split_size * B_split_size, sizeof(double));
     matrix_multiply(A_recv1, A_split_size, N2, B_recv1, N2, B_split_size, C_part);
     //sleep(1 + world_rank);
-    printf("World_rank %d ,RANK (%d,%d) , Displs: %d\n", world_rank,coords[0], coords[1],coords[0] * B_split_size + A_split_size * coords[1] * N3 );
-    old_print_matrix(C_part, A_split_size, B_split_size);
-    //puts("\n\n");
+    printf("World_rank %d ,RANK (%d,%d) , Displs: %d\n", world_rank, coords[0], coords[1],
+           coords[0] * B_split_size + A_split_size * coords[1] * N3);
+
+    for (int i = 0; i < A_split_size * B_split_size ; i++) {
+        printf("%lf ", C_part[i]);
+    }
+    //  old_print_matrix(C_part, A_split_size, B_split_size);
+    puts("\n");
 
 
     int *block_lengths = calloc(A_split_size, sizeof(int));
@@ -199,7 +204,7 @@ int main(int argc, char **argv) {
     MPI_Datatype *types = calloc(A_split_size, sizeof(MPI_Datatype));
     for (int i = 0; i < A_split_size; i++) {
         block_lengths[i] = B_split_size;
-        matrix_displace[i] = i * N3;
+        matrix_displace[i] = (long) (i * N3 * sizeof(double));
         types[i] = MPI_DOUBLE;
     }
 
@@ -210,28 +215,12 @@ int main(int argc, char **argv) {
     MPI_Datatype matrix_back, matrix_back_resized;
     MPI_Type_vector(A_split_size, B_split_size, N3, MPI_DOUBLE, &matrix_back);
     MPI_Type_commit(&matrix_back);
-    MPI_Type_create_resized(matrix_back, 0, (int)(B_split_size * sizeof(double)), &matrix_back_resized);
+    MPI_Type_create_resized(matrix_back, 0, (int) (B_split_size * sizeof(double)), &matrix_back_resized);
     MPI_Type_commit(&matrix_back_resized);
 
 
-//    if (world_rank == RANK_ROOT){
-//        int num_blocks, tag, size,num_elem;
-//        MPI_Type_get_envelope(structure, &num_elem, &num_blocks, &size,&tag);
-//
-//        int array_of_block_lengths[num_blocks], array_of_displacements[num_blocks];
-//        MPI_Datatype array_of_types[num_blocks];
-//     //   MPI_Type_get_contents(structure, num_blocks, num_blocks, num_blocks, array_of_block_lengths,
-//                           //   array_of_displacements, array_of_types);
-//
-//        printf("Custom datatype:\n");
-//        printf("Tag: %d\n", tag);
-//        printf("Size: %d\n", size);
-//        for (int i = 0; i < num_blocks; i++) {
-//            printf("Block %d: Type = %d, Length = %d, Displacement = %d\n", i,
-//                   array_of_types[i], array_of_block_lengths[i], array_of_displacements[i]);
-//        }
-//    }
-
+    // A_split_size = N1/dims[1];
+    // B_split_size = N3/dims[0];
     int *displs;
     int *sizes;
     if (world_rank == RANK_ROOT) {
@@ -239,7 +228,7 @@ int main(int argc, char **argv) {
         sizes = calloc(world_size, sizeof(int));
         for (int i = 0; i < dims[1]; i++) {
             for (int j = 0; j < dims[0]; j++) {
-                displs[i + j * dims[1]] = j * B_split_size + A_split_size * i * N3;
+                displs[i + j * dims[1]] = (j * B_split_size + A_split_size * i * N3);
             }
             //  displs[i] = (coords[1] * N3 + coords[0]) * B_split_size;
             //  displs[i] = coords[1] * B_split_size + A_split_size * coords[0] * N3;
@@ -247,22 +236,24 @@ int main(int argc, char **argv) {
         for (int i = 0; i < world_size; i++) {
             sizes[i] = A_split_size * B_split_size;
         }
-        for(int i = 0; i < world_size; i++){
-           // printf("Displs %d, Sizes %d\n",displs[i],sizes[i]);
+        for (int i = 0; i < world_size; i++) {
+            printf("\nDispls %d, Sizes %d\n", displs[i], sizes[i]);
         }
     }
-        MPI_Gatherv(C_part, 1, structure, C, sizes, displs, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
-//    MPI_Gather(C_part, A_split_size * B_split_size, MPI_DOUBLE, C, A_split_size * B_split_size, MPI_DOUBLE, RANK_ROOT,
-//               MPI_COMM_WORLD);
+    MPI_Gatherv(C_part, 1, structure, C, sizes, displs, MPI_DOUBLE, RANK_ROOT, MPI_COMM_WORLD);
 
-        if (world_rank == RANK_ROOT) {
-            old_print_matrix(C, N1, N3);
-        }
-
-
-        MPI_Finalize();
-        return 0;
+    if (world_rank == RANK_ROOT) {
+        old_print_matrix(C, N1, N3);
     }
+    MPI_Type_free(&matrix_back);
+    MPI_Type_free(&matrix_back_resized);
+    MPI_Type_free(&column);
+    MPI_Type_free(&column_resized);
+    MPI_Type_free(&structure);
+
+    MPI_Finalize();
+    return 0;
+}
 
 
 
