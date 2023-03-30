@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <mpi.h>
 #include <unistd.h>
+#include <string.h>
 
 #define N1 21
 #define N2 21
@@ -9,7 +10,7 @@
 
 #define RANK_ROOT 0
 
-void fill_matrix(double *A, int height, int width) {
+void fill_matrix_1(double *A, int height, int width) {
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             if (i == j)
@@ -19,12 +20,27 @@ void fill_matrix(double *A, int height, int width) {
         }
     }
 }
-//void old_fill_matrix(double *A, int height, int width) {
-//    for (int i = 0; i < height * width; i++) {
-//        A[i] = i + 1;
-//    }
-//}
+void fill_matrix_2(double *A, int height, int width) {
+    for (int i = 0; i < height * width; i++) {
+        A[i] = i + 1;
+    }
+}
 
+
+void file_print_matrix(double *A, int height, int width) {
+    FILE *file = fopen("./matrix.txt", "w");
+    fprintf(file, "[");
+    for (int i = 0; i < height; i++) {
+        fprintf(file, "[");
+        for (int j = 0; j < width; j++) {
+            fprintf(file, "%lf, ", A[i * width + j]);
+        }
+        fprintf(file, "],");
+        fputs("\n", file);
+    }
+    fprintf(file, "]");
+    fclose(file);
+}
 
 void print_matrix(double *A, int height, int width) {
     for (int i = 0; i < height; i++) {
@@ -35,21 +51,25 @@ void print_matrix(double *A, int height, int width) {
     }
 }
 
+
 void
 matrix_multiply(const double *A, int A_height, int A_width, const double *B, int B_height, int B_width, double *C) {
     if (A_width != B_height)
         return;
 
+   // memset(C, 0, sizeof(*C) * A_height * B_width);
+
     for (int i = 0; i < A_height; i++) {
-        for (int j = 0; j < B_width; j++) {
-            double sum = 0;
-            for (int k = 0; k < A_width; k++) {
-                sum += A[i * A_width + k] * B[k * B_width + j];
+        for (int k = 0; k < A_width; k++) {
+            for (int j = 0; j < B_width; j++) {
+                C[i * B_width + j] += A[i * A_width + k] * B[k * B_width + j];
             }
-            C[i * B_width + j] = sum;
         }
     }
 }
+
+#define X 0
+#define Y 1
 
 MPI_Comm create_new_comm(int size, int rank, int *dims) {
     int periods[2] = {0, 0}, coords[2], reorder = 1;
@@ -58,8 +78,8 @@ MPI_Comm create_new_comm(int size, int rank, int *dims) {
     MPI_Comm comm2d;
 
     MPI_Dims_create(size, 2, dims);
-    sizex = dims[0];
-    sizey = dims[1];
+    sizex = dims[X];
+    sizey = dims[Y];
     if (rank == RANK_ROOT)
         printf("Dimensions (%d, %d)\n", sizex, sizey);
 
@@ -106,9 +126,9 @@ int main(int argc, char **argv) {
     double *A, *B, *C;
     if (world_rank == RANK_ROOT) {
         A = calloc(N1 * N2, sizeof(double));
-        fill_matrix(A, N1, N2);
+        fill_matrix_2(A, N1, N2);
         B = calloc(N2 * N3, sizeof(double));
-        fill_matrix(B, N2, N3);
+        fill_matrix_2(B, N2, N3);
         C = calloc(N1 * N3, sizeof(double));
     }
     int dims[2] = {0, 0}; //x y
@@ -143,7 +163,7 @@ int main(int argc, char **argv) {
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    send_matrix(A_recv,B_recv,A_split_size,B_split_size,A,B,coords,row_comm,col_comm);
+    send_matrix(A_recv, B_recv, A_split_size, B_split_size, A, B, coords, row_comm, col_comm);
     MPI_Barrier(MPI_COMM_WORLD);
 
     double *C_part = calloc(A_split_size * B_split_size, sizeof(double));
@@ -169,34 +189,27 @@ int main(int argc, char **argv) {
             sizes[i] = 1;
         }
     }
-    MPI_Gatherv(C_part, B_split_size * A_split_size, MPI_DOUBLE, C, sizes, displs, send_matrix_part_resized, RANK_ROOT,
-                comm2d);
+    MPI_Gatherv(C_part, B_split_size * A_split_size, MPI_DOUBLE, C, sizes, displs, send_matrix_part_resized, RANK_ROOT, comm2d);
+    MPI_Type_free(&send_matrix_part);
+    MPI_Type_free(&send_matrix_part_resized);
+
+    double end = MPI_Wtime();
 
     if (world_rank == RANK_ROOT) {
-        // print_matrix(C, N1, N3);
-        double trace = 0;
-        for (int i = 0; i < N1; i++) {
-            for (int j = 0; j < N3; j++) {
-                if (i == j)
-                    trace += C[i * N1 + j];
-            }
+        file_print_matrix(C, N1, N3);
+        char script[100];
+        sprintf(script, "/mnt/c/'Python 3.8.2'/python.exe ./check_matrix.py %d %d %d %d", N1, N2, N3, 2);
+        if( system(script)!= 0 ) {
+            perror("Script didn't run");
         }
-        //printf("%lf\n", trace);
-        if (trace == (3 + N1) * N1) {
-            printf("OK\n");
-        }
+        printf("%lf sec\n", end - start);
         free(A);
         free(B);
         free(C);
         free(displs);
         free(sizes);
     }
-    MPI_Type_free(&send_matrix_part);
-    MPI_Type_free(&send_matrix_part_resized);
-    double end = MPI_Wtime();
-    if (world_rank == RANK_ROOT){
-        printf("%lf sec\n",end- start);
-    }
+
     MPI_Finalize();
     return 0;
 }
