@@ -3,9 +3,9 @@
 #include <mpi.h>
 #include <unistd.h>
 
-#define N1 2100
-#define N2 2100
-#define N3 2100
+#define N1 21
+#define N2 21
+#define N3 21
 
 #define RANK_ROOT 0
 
@@ -70,31 +70,10 @@ MPI_Comm create_new_comm(int size, int rank, int *dims) {
     return comm2d;
 }
 
-void create_new_X_Y_comms(MPI_Comm row_comm, MPI_Comm col_comm, MPI_Comm comm2d, int *coords, const int *dims) {
-
-    MPI_Comm_split(comm2d, coords[0], coords[1], &col_comm);
-    MPI_Comm_split(comm2d, coords[1], coords[0], &row_comm);
-    MPI_Barrier(comm2d);
-    int row_rank, row_size;
-    MPI_Comm_rank(row_comm, &row_rank);
-    MPI_Comm_size(row_comm, &row_size);
-    int col_rank, col_size;
-    MPI_Comm_rank(col_comm, &col_rank);
-    MPI_Comm_size(col_comm, &col_size);
-
-    if (row_size != dims[0] || col_size != dims[1]) {
-        perror("Bad size of topology");
-        exit(1);
-    }
-    if (N1 % col_size != 0 || N3 % row_size != 0) {
-        perror("Bad size of matrix");
-        exit(1);
-    }
-}
-
 void
 send_matrix(double *A_recv, double *B_recv, int A_split_size, int B_split_size, double *A, double *B, const int *coords,
             MPI_Comm row_comm, MPI_Comm col_comm) {
+
     MPI_Datatype column;
     MPI_Type_vector(N2, B_split_size, N3, MPI_DOUBLE, &column);
     MPI_Type_commit(&column);
@@ -107,7 +86,6 @@ send_matrix(double *A_recv, double *B_recv, int A_split_size, int B_split_size, 
     }
     if (coords[1] == 0) {
         MPI_Scatter(B, 1, column_resized, B_recv, N2 * B_split_size, MPI_DOUBLE, 0, row_comm);
-        print_matrix(B_recv, N2, B_split_size);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
@@ -116,6 +94,7 @@ send_matrix(double *A_recv, double *B_recv, int A_split_size, int B_split_size, 
 
     MPI_Type_free(&column);
     MPI_Type_free(&column_resized);
+
 }
 
 int main(int argc, char **argv) {
@@ -128,13 +107,8 @@ int main(int argc, char **argv) {
     if (world_rank == RANK_ROOT) {
         A = calloc(N1 * N2, sizeof(double));
         fill_matrix(A, N1, N2);
-      //  puts("Matrix A:");
-       //print_matrix(A, N1, N2);
-       // puts("\n");
         B = calloc(N2 * N3, sizeof(double));
         fill_matrix(B, N2, N3);
-        //puts("Matrix B:");
-     //   print_matrix(B, N2, N3);
         C = calloc(N1 * N3, sizeof(double));
     }
     int dims[2] = {0, 0}; //x y
@@ -164,64 +138,17 @@ int main(int argc, char **argv) {
 
     int A_split_size = N1 / dims[1];
     int B_split_size = N3 / dims[0];
-   // printf("Split: A:%d, B:%d\n", A_split_size, B_split_size);
     double *A_recv = calloc(A_split_size * N2, sizeof(double));
     double *B_recv = calloc(B_split_size * N2, sizeof(double));
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    MPI_Datatype column;
-    MPI_Type_vector(N2, B_split_size, N3, MPI_DOUBLE, &column);
-    MPI_Type_commit(&column);
-    MPI_Datatype column_resized;
-    MPI_Type_create_resized(column, 0, (int) (B_split_size * sizeof(double)), &column_resized);
-    MPI_Type_commit(&column_resized);
-
-    if (coords[0] == 0) {
-        MPI_Scatter(A, N2 * A_split_size, MPI_DOUBLE, A_recv, N2 * A_split_size, MPI_DOUBLE, 0, col_comm);
-      //  printf("Matrix A_recv in (%d, %d):\n",coords[0],coords[1]);
-      //  print_matrix(A_recv, A_split_size, N2);
-    }
-    if (coords[1] == 0) {
-        MPI_Scatter(B, 1, column_resized, B_recv, N2 * B_split_size, MPI_DOUBLE, 0, row_comm);
-      //  sleep(1 + world_rank * 2);
-      //  printf("Matrix B_recv in (%d, %d):\n",coords[0],coords[1]);
-       // print_matrix(B_recv, N2, B_split_size);
-    }
+    send_matrix(A_recv,B_recv,A_split_size,B_split_size,A,B,coords,row_comm,col_comm);
     MPI_Barrier(MPI_COMM_WORLD);
 
-    MPI_Bcast(A_recv, N2 * A_split_size, MPI_DOUBLE, RANK_ROOT, row_comm);
-    MPI_Bcast(B_recv, N2 * B_split_size, MPI_DOUBLE, RANK_ROOT, col_comm);
-
-    MPI_Type_free(&column);
-    MPI_Type_free(&column_resized);
-
-    MPI_Barrier(MPI_COMM_WORLD);
-
-//    sleep(1 + world_rank * 2);
- //   printf("RANK (%d,%d): ", coords[0], coords[1]);
-  //  puts("\n");
-    // print_matrix(A_recv, A_split_size, N2);
- //   puts("\n");
-    //print_matrix(B_recv, N2, B_split_size);
-  //  puts("\n\n");
     double *C_part = calloc(A_split_size * B_split_size, sizeof(double));
     matrix_multiply(A_recv, A_split_size, N2, B_recv, N2, B_split_size, C_part);
 
-// Doesn't work. Sad :(
-
-//    int *block_lengths = calloc(A_split_size, sizeof(int));
-//    long *matrix_displace = calloc(A_split_size, sizeof(int));
-//    MPI_Datatype *types = calloc(A_split_size, sizeof(MPI_Datatype));
-//    for (int i = 0; i < A_split_size; i++) {
-//        block_lengths[i] = B_split_size;
-//        matrix_displace[i] = (long) (i * N3 * sizeof(double));
-//        types[i] = MPI_DOUBLE;
-//    }
-//
-//    MPI_Datatype structure;
-//    MPI_Type_create_struct(A_split_size, block_lengths, matrix_displace, types, &structure);
-//    MPI_Type_commit(&structure);
 
     MPI_Datatype send_matrix_part, send_matrix_part_resized;
     MPI_Type_vector(A_split_size, B_split_size, N3, MPI_DOUBLE, &send_matrix_part);
@@ -241,9 +168,6 @@ int main(int argc, char **argv) {
         for (int i = 0; i < world_size; i++) {
             sizes[i] = 1;
         }
-//        for (int i = 0; i < world_size; i++) {
-//            printf("\nDispls %d, Sizes %d\n", displs[i], sizes[i]);
-//        }
     }
     MPI_Gatherv(C_part, B_split_size * A_split_size, MPI_DOUBLE, C, sizes, displs, send_matrix_part_resized, RANK_ROOT,
                 comm2d);
@@ -257,10 +181,10 @@ int main(int argc, char **argv) {
                     trace += C[i * N1 + j];
             }
         }
-        printf("%lf\n", trace);
-//        if (trace == (3 + N1) * N1) {
-//            printf("OK\n");
-//        }
+        //printf("%lf\n", trace);
+        if (trace == (3 + N1) * N1) {
+            printf("OK\n");
+        }
         free(A);
         free(B);
         free(C);
@@ -271,7 +195,7 @@ int main(int argc, char **argv) {
     MPI_Type_free(&send_matrix_part_resized);
     double end = MPI_Wtime();
     if (world_rank == RANK_ROOT){
-        printf("%lf sec",end- start);
+        printf("%lf sec\n",end- start);
     }
     MPI_Finalize();
     return 0;
