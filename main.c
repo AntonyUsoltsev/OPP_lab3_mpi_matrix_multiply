@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <mpi.h>
 
-#define N1 100
-#define N2 100
-#define N3 100
+#define N1 3360
+#define N2 3360
+#define N3 3360
 
 #define RANK_ROOT 0
 #define X 0
@@ -28,7 +28,7 @@ void fill_matrix(double *A, int height, int width) {
 //}
 
 
-void file_print_matrix(double *A, int height, int width,char* file_name) {
+void file_print_matrix(double *A, int height, int width, char *file_name) {
     FILE *file = fopen(file_name, "w");
     fprintf(file, "[");
     for (int i = 0; i < height; i++) {
@@ -109,7 +109,7 @@ void receive_matrix(int A_split_size, int B_split_size, int world_rank, int worl
     MPI_Type_create_resized(send_matrix_part, 0, (int) (B_split_size * sizeof(double)), &send_matrix_part_resized);
     MPI_Type_commit(&send_matrix_part_resized);
 
-    int *displs, *sizes;
+    int *displs = NULL, *sizes = NULL;
     if (world_rank == RANK_ROOT) {
         displs = calloc(world_size, sizeof(int));
         sizes = calloc(world_size, sizeof(int));
@@ -137,14 +137,14 @@ int main(int argc, char **argv) {
     int world_size, world_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    double *A, *B, *C;
+    double *A = NULL, *B = NULL, *C = NULL;
     if (world_rank == RANK_ROOT) {
         A = calloc(N1 * N2, sizeof(double));
         fill_matrix(A, N1, N2);
-        file_print_matrix(A, N1, N2,"./matrix_A.txt");
+        //    file_print_matrix(A, N1, N2,"./matrix_A.txt");
         B = calloc(N2 * N3, sizeof(double));
         fill_matrix(B, N2, N3);
-        file_print_matrix(B, N2, N3,"./matrix_B.txt");
+        //  file_print_matrix(B, N2, N3,"./matrix_B.txt");
         C = calloc(N1 * N3, sizeof(double));
     }
 
@@ -189,12 +189,12 @@ int main(int argc, char **argv) {
     double end = MPI_Wtime();
 
     if (world_rank == RANK_ROOT) {
-        file_print_matrix(C, N1, N3,"./matrix_C.txt");
-        char script[100];
-        sprintf(script, "/mnt/c/'Python 3.8.2'/python.exe ./check_matrix.py");
-        if (system(script) != 0) {
-            perror("Script didn't run");
-        }
+//        file_print_matrix(C, N1, N3,"./matrix_C.txt");
+//        char script[100];
+//        sprintf(script, "/mnt/c/'Python 3.8.2'/python.exe ./check_matrix.py");
+//        if (system(script) != 0) {
+//            perror("Script didn't run");
+//        }
         printf("%lf sec\n", end - start);
         free(A);
         free(B);
